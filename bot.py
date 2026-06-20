@@ -1,17 +1,16 @@
 import os
 import logging
 import asyncio
-from datetime import datetime, time
-from typing import Dict, List
+from datetime import datetime
 import json
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters
+    ContextTypes, filters
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 import pytz
 
 logging.basicConfig(
@@ -49,11 +48,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📌 *Qanday ishlatiladi:*\n\n"
         "1️⃣ Menga rasm/video/fayl yuboring\n"
         "2️⃣ Keyin vaqt belgilang: `/schedule 09:00`\n"
-        "3️⃣ Bot har kuni o'sha vaqtda kanalga yuboradi\n\n"
+        "3️⃣ Bot o'SHA VAQTDA 1 MARTA yuboradi va tamom!\n\n"
         "📋 *Buyruqlar:*\n"
-        "/schedule HH:MM — vaqt belgilash\n"
-        "/list — barcha rejalashtirilgan postlar\n"
-        "/delete — postni o'chirish\n"
+        "/list — kutayotgan postlar\n"
+        "/cancel — oxirgi postni bekor qilish\n"
         "/status — bot holati\n"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -108,8 +106,8 @@ async def receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await msg.reply_text(
         f"✅ *{type_names.get(file_type, 'Fayl')}* qabul qilindi!\n\n"
-        f"⏰ Endi vaqt belgilang:\n`/schedule 09:00`\n\n"
-        f"_(O'zbekiston vaqti bo'yicha)_",
+        f"⏰ Endi vaqt belgilang:\n`/schedule 14:30`\n\n"
+        f"_(O'sha vaqtda 1 marta yuboradi va tamom)_",
         parse_mode="Markdown"
     )
 
@@ -119,7 +117,7 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
         await update.message.reply_text(
-            "❌ Vaqt kiriting!\nMisol: `/schedule 09:00`",
+            "❌ Vaqt kiriting!\nMisol: `/schedule 14:30`",
             parse_mode="Markdown"
         )
         return
@@ -132,7 +130,7 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raise ValueError
     except ValueError:
         await update.message.reply_text(
-            "❌ Noto'g'ri vaqt formati!\nTo'g'ri format: `09:00` yoki `21:30`",
+            "❌ Noto'g'ri format!\nTo'g'ri: `14:30` yoki `09:00`",
             parse_mode="Markdown"
         )
         return
@@ -140,13 +138,26 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pending = context.user_data.get("pending_file")
     if not pending:
         await update.message.reply_text(
-            "❌ Avval menga fayl yuboring, keyin vaqt belgilang!",
+            "❌ Avval menga fayl yuboring, keyin vaqt belgilang!"
+        )
+        return
+
+    tz = pytz.timezone(TIMEZONE)
+    now = datetime.now(tz)
+
+    send_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    if send_time <= now:
+        await update.message.reply_text(
+            f"❌ {hour:02d}:{minute:02d} vaqti o'tib ketgan!\n"
+            f"Hozir: {now.strftime('%H:%M')}\n"
+            f"Kelajakdagi vaqt kiriting.",
+            parse_mode="Markdown"
         )
         return
 
     data = load_data()
-
-    schedule_id = f"post_{hour:02d}{minute:02d}_{len(data['schedules'])}"
+    schedule_id = f"once_{hour:02d}{minute:02d}_{len(data['schedules'])}"
 
     new_schedule = {
         "id": schedule_id,
@@ -155,26 +166,25 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "caption": pending["caption"],
         "hour": hour,
         "minute": minute,
-        "created_at": datetime.now().isoformat()
+        "send_time": send_time.isoformat()
     }
 
     data["schedules"].append(new_schedule)
     save_data(data)
 
-    add_job_to_scheduler(context.application, new_schedule)
-
+    add_once_job(context.application, new_schedule, send_time)
     context.user_data.pop("pending_file", None)
 
     await update.message.reply_text(
-        f"✅ *Muvaffaqiyatli rejalashtirildi!*\n\n"
-        f"⏰ Vaqt: *{hour:02d}:{minute:02d}* (O'zbekiston)\n"
+        f"✅ *Tayyor!*\n\n"
+        f"⏰ Yuborish vaqti: *{hour:02d}:{minute:02d}*\n"
         f"📢 Kanal: `{CHANNEL_ID}`\n"
-        f"🔄 Har kuni avtomatik yuboriladi",
+        f"🔔 Faqat 1 marta yuboriladi",
         parse_mode="Markdown"
     )
 
-def add_job_to_scheduler(app, schedule):
-    async def send_post():
+def add_once_job(app, schedule, send_time):
+    async def send_and_delete():
         try:
             bot = app.bot
             ftype = schedule["file_type"]
@@ -196,13 +206,27 @@ def add_job_to_scheduler(app, schedule):
             elif ftype == "video_note":
                 await bot.send_video_note(chat_id=CHANNEL_ID, video_note=fid)
 
-            logger.info(f"Post yuborildi: {schedule['id']} -> {CHANNEL_ID}")
+            logger.info(f"✅ Post yuborildi va o'chirildi: {schedule['id']}")
+
+            data = load_data()
+            data["schedules"] = [s for s in data["schedules"] if s["id"] != schedule["id"]]
+            save_data(data)
+
+            await bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"✅ Post muvaffaqiyatli yuborildi!\n📢 Kanal: {CHANNEL_ID}"
+            )
+
         except Exception as e:
-            logger.error(f"Post yuborishda xato: {e}")
+            logger.error(f"Xato: {e}")
+            try:
+                await app.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Post yuborishda xato: {e}")
+            except:
+                pass
 
     scheduler.add_job(
-        send_post,
-        CronTrigger(hour=schedule["hour"], minute=schedule["minute"]),
+        send_and_delete,
+        DateTrigger(run_date=send_time),
         id=schedule["id"],
         replace_existing=True
     )
@@ -215,7 +239,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     schedules = data.get("schedules", [])
 
     if not schedules:
-        await update.message.reply_text("📭 Hech qanday rejalashtirilgan post yo'q.")
+        await update.message.reply_text("📭 Kutayotgan post yo'q.")
         return
 
     type_icons = {
@@ -223,51 +247,31 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "document": "📄", "animation": "🎞", "voice": "🎤", "video_note": "⭕"
     }
 
-    text = "📋 *Rejalashtirilgan postlar:*\n\n"
+    text = "📋 *Kutayotgan postlar:*\n\n"
     for i, s in enumerate(schedules, 1):
         icon = type_icons.get(s["file_type"], "📎")
-        text += f"{i}. {icon} — ⏰ {s['hour']:02d}:{s['minute']:02d}\n"
-        if s.get("caption"):
-            text += f"   📝 _{s['caption'][:30]}..._\n" if len(s['caption']) > 30 else f"   📝 _{s['caption']}_\n"
-        text += f"   🆔 `{s['id']}`\n\n"
+        text += f"{i}. {icon} — ⏰ {s['hour']:02d}:{s['minute']:02d} (1 marta)\n"
 
-    text += "🗑 O'chirish uchun: `/delete ID`"
     await update.message.reply_text(text, parse_mode="Markdown")
 
-async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    if not context.args:
-        await update.message.reply_text(
-            "❌ ID kiriting!\nMisol: `/delete post_0900_0`\n\n"
-            "IDlarni ko'rish: /list",
-            parse_mode="Markdown"
-        )
-        return
-
-    schedule_id = context.args[0]
     data = load_data()
-    schedules = data.get("schedules", [])
-
-    found = False
-    for s in schedules:
-        if s["id"] == schedule_id:
-            found = True
-            schedules.remove(s)
-            break
-
-    if not found:
-        await update.message.reply_text(f"❌ `{schedule_id}` topilmadi!", parse_mode="Markdown")
+    if not data["schedules"]:
+        await update.message.reply_text("📭 Bekor qilish uchun post yo'q.")
         return
 
-    data["schedules"] = schedules
+    last = data["schedules"].pop()
     save_data(data)
 
-    if scheduler.get_job(schedule_id):
-        scheduler.remove_job(schedule_id)
+    if scheduler.get_job(last["id"]):
+        scheduler.remove_job(last["id"])
 
-    await update.message.reply_text(f"✅ `{schedule_id}` o'chirildi!", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"✅ Bekor qilindi: ⏰ {last['hour']:02d}:{last['minute']:02d}"
+    )
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -275,24 +279,32 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = load_data()
     count = len(data.get("schedules", []))
-    jobs = len(scheduler.get_jobs())
-    now = datetime.now(pytz.timezone(TIMEZONE))
+    tz = pytz.timezone(TIMEZONE)
+    now = datetime.now(tz)
 
     await update.message.reply_text(
         f"🤖 *Bot holati:* Ishlayapti ✅\n\n"
-        f"📅 Hozirgi vaqt: `{now.strftime('%d.%m.%Y %H:%M')}` (UZ)\n"
-        f"📋 Jami postlar: `{count}` ta\n"
-        f"⚙️ Faol vazifalar: `{jobs}` ta\n"
+        f"🕐 Hozir: `{now.strftime('%H:%M')}` (UZ)\n"
+        f"📋 Kutayotgan postlar: `{count}` ta\n"
         f"📢 Kanal: `{CHANNEL_ID}`",
         parse_mode="Markdown"
     )
 
 async def post_init(application):
+    tz = pytz.timezone(TIMEZONE)
+    now = datetime.now(tz)
     data = load_data()
+    valid = []
     for s in data.get("schedules", []):
-        add_job_to_scheduler(application, s)
+        from datetime import datetime as dt
+        send_time = dt.fromisoformat(s["send_time"])
+        if send_time > now:
+            add_once_job(application, s, send_time)
+            valid.append(s)
+    data["schedules"] = valid
+    save_data(data)
     scheduler.start()
-    logger.info(f"{len(data.get('schedules', []))} ta jadval yuklandi")
+    logger.info(f"{len(valid)} ta kutayotgan post yuklandi")
 
 def main():
     if not BOT_TOKEN:
@@ -307,7 +319,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("schedule", schedule_command))
     app.add_handler(CommandHandler("list", list_command))
-    app.add_handler(CommandHandler("delete", delete_command))
+    app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(MessageHandler(
         filters.PHOTO | filters.VIDEO | filters.AUDIO |
