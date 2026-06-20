@@ -11,22 +11,18 @@ from telegram.ext import (
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 CHANNEL_ID = os.environ.get("CHANNEL_ID", "")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
-TZ_OFFSET = timedelta(hours=5)
-TZ = timezone(TZ_OFFSET)
+TZ = timezone(timedelta(hours=5))
 
 STORAGE_FILE = "scheduled_files.json"
 
-def now_tashkent():
+def now_uz():
     return datetime.now(TZ)
 
 def load_data():
@@ -43,21 +39,18 @@ scheduler = AsyncIOScheduler(timezone=TZ)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Siz admin emassiz!")
         return
-
-    text = (
-        "👋 *Kanal Auto-Post Boti*\n\n"
-        "📌 *Qanday ishlatiladi:*\n\n"
-        "1️⃣ Menga rasm/video/fayl yuboring\n"
-        "2️⃣ Keyin vaqt belgilang: `/schedule 09:00`\n"
-        "3️⃣ O'sha vaqtda 1 marta kanalga yuboradi\n\n"
-        "📋 *Buyruqlar:*\n"
-        "/list — kutayotgan postlar\n"
-        "/cancel — oxirgi postni bekor qilish\n"
-        "/status — bot holati va hozirgi vaqt\n"
+    now = now_uz()
+    await update.message.reply_text(
+        f"👋 *Kanal Auto-Post Boti*\n\n"
+        f"🕐 Hozir: *{now.strftime('%H:%M')}* (Toshkent)\n\n"
+        f"📌 *Ishlatish:*\n"
+        f"Menga rasm/video/fayl yuboring → men vaqt so'rayman → siz vaqt yozasiz → yuboriladi!\n\n"
+        f"/list — kutayotgan postlar\n"
+        f"/cancel — oxirgi postni bekor qilish\n"
+        f"/status — bot holati",
+        parse_mode="Markdown"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -95,6 +88,7 @@ async def receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "file_type": file_type,
         "caption": caption
     }
+    context.user_data["waiting_time"] = True
 
     type_names = {
         "photo": "🖼 Rasm", "video": "🎥 Video", "audio": "🎵 Musiqa",
@@ -102,29 +96,32 @@ async def receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "voice": "🎤 Ovozli", "video_note": "⭕ Video doira"
     }
 
-    now = now_tashkent()
+    now = now_uz()
     await msg.reply_text(
         f"✅ *{type_names.get(file_type, 'Fayl')}* qabul qilindi!\n\n"
         f"🕐 Hozir Toshkent vaqti: *{now.strftime('%H:%M')}*\n\n"
-        f"⏰ Vaqt belgilang: `/schedule 14:30`",
+        f"⏰ Qaysi vaqtda yuboray?\n"
+        f"Faqat vaqt yozing, masalan: *09:00* yoki *21:30*",
         parse_mode="Markdown"
     )
 
-async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-
-    if not context.args:
-        await update.message.reply_text("❌ Misol: `/schedule 14:30`", parse_mode="Markdown")
+    if not context.user_data.get("waiting_time"):
         return
 
-    time_str = context.args[0]
+    text = update.message.text.strip()
+
     try:
-        hour, minute = map(int, time_str.split(":"))
+        hour, minute = map(int, text.split(":"))
         if not (0 <= hour <= 23 and 0 <= minute <= 59):
             raise ValueError
     except ValueError:
-        await update.message.reply_text("❌ To'g'ri format: `14:30`", parse_mode="Markdown")
+        await update.message.reply_text(
+            "❌ Noto'g'ri format!\nMasalan: `09:00` yoki `21:30`",
+            parse_mode="Markdown"
+        )
         return
 
     pending = context.user_data.get("pending_file")
@@ -132,17 +129,15 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Avval fayl yuboring!")
         return
 
-    now = now_tashkent()
+    now = now_uz()
     send_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
+    # Agar vaqt o'tib ketgan bo'lsa — ertaga yuborsin
     if send_time <= now:
-        await update.message.reply_text(
-            f"❌ Bu vaqt o'tib ketgan!\n"
-            f"🕐 Hozir: *{now.strftime('%H:%M')}*\n"
-            f"Kelajakdagi vaqt kiriting.",
-            parse_mode="Markdown"
-        )
-        return
+        send_time = send_time + timedelta(days=1)
+        tomorrow = True
+    else:
+        tomorrow = False
 
     data = load_data()
     schedule_id = f"once_{hour:02d}{minute:02d}_{len(data['schedules'])}"
@@ -160,13 +155,16 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data["schedules"].append(new_schedule)
     save_data(data)
     add_once_job(context.application, new_schedule, send_time)
-    context.user_data.pop("pending_file", None)
 
+    context.user_data.pop("pending_file", None)
+    context.user_data.pop("waiting_time", None)
+
+    when = "ertaga" if tomorrow else "bugun"
     await update.message.reply_text(
         f"✅ *Tayyor!*\n\n"
-        f"⏰ Yuborish vaqti: *{hour:02d}:{minute:02d}* (Toshkent)\n"
+        f"⏰ *{when} {hour:02d}:{minute:02d}* da yuboriladi (Toshkent)\n"
         f"📢 Kanal: `{CHANNEL_ID}`\n"
-        f"🔔 Faqat 1 marta yuboriladi va tamom",
+        f"🔔 Faqat 1 marta",
         parse_mode="Markdown"
     )
 
@@ -197,7 +195,7 @@ def add_once_job(app, schedule, send_time):
             data["schedules"] = [s for s in data["schedules"] if s["id"] != schedule["id"]]
             save_data(data)
 
-            await bot.send_message(chat_id=ADMIN_ID, text=f"✅ Post yuborildi! Kanal: {CHANNEL_ID}")
+            await bot.send_message(chat_id=ADMIN_ID, text=f"✅ Post yuborildi! @justsaid7")
             logger.info(f"Post yuborildi: {schedule['id']}")
 
         except Exception as e:
@@ -217,14 +215,11 @@ def add_once_job(app, schedule, send_time):
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-
     data = load_data()
     schedules = data.get("schedules", [])
-
     if not schedules:
         await update.message.reply_text("📭 Kutayotgan post yo'q.")
         return
-
     type_icons = {
         "photo": "🖼", "video": "🎥", "audio": "🎵",
         "document": "📄", "animation": "🎞", "voice": "🎤", "video_note": "⭕"
@@ -232,34 +227,29 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "📋 *Kutayotgan postlar:*\n\n"
     for i, s in enumerate(schedules, 1):
         icon = type_icons.get(s["file_type"], "📎")
-        text += f"{i}. {icon} — ⏰ {s['hour']:02d}:{s['minute']:02d} (Toshkent)\n"
-
+        send_time = datetime.fromisoformat(s["send_time"])
+        text += f"{i}. {icon} — ⏰ {send_time.strftime('%d.%m %H:%M')} (Toshkent)\n"
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-
     data = load_data()
     if not data["schedules"]:
         await update.message.reply_text("📭 Bekor qilish uchun post yo'q.")
         return
-
     last = data["schedules"].pop()
     save_data(data)
     if scheduler.get_job(last["id"]):
         scheduler.remove_job(last["id"])
-
-    await update.message.reply_text(f"✅ Bekor qilindi: ⏰ {last['hour']:02d}:{last['minute']:02d}")
+    await update.message.reply_text(f"✅ Bekor qilindi!")
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-
     data = load_data()
     count = len(data.get("schedules", []))
-    now = now_tashkent()
-
+    now = now_uz()
     await update.message.reply_text(
         f"🤖 *Bot holati:* Ishlayapti ✅\n\n"
         f"🕐 Toshkent vaqti: *{now.strftime('%H:%M')}*\n"
@@ -269,7 +259,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def post_init(application):
-    now = now_tashkent()
+    now = now_uz()
     data = load_data()
     valid = []
     for s in data.get("schedules", []):
@@ -292,7 +282,6 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("schedule", schedule_command))
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("status", status_command))
@@ -301,6 +290,10 @@ def main():
         filters.Document.ALL | filters.ANIMATION |
         filters.VOICE | filters.VIDEO_NOTE,
         receive_file
+    ))
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        receive_time
     ))
 
     logger.info("Bot polling...")
