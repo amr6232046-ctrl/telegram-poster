@@ -19,9 +19,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-CHANNEL_ID = os.environ.get("CHANNEL_ID", "")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8934416118:AAEHHpnm3N7vqwzSfiWAkb6w5a1fckfkjMw")
+CHANNEL_ID = os.environ.get("CHANNEL_ID", "@justsaid7")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "2074844421"))
 TIMEZONE = os.environ.get("TIMEZONE", "Asia/Tashkent")
 
 STORAGE_FILE = "scheduled_files.json"
