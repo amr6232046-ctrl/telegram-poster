@@ -45,8 +45,7 @@ def save_schedules(data):
         json.dump(data, f, indent=2)
 
 def get_user(user_id):
-    users = load_users()
-    return users.get(str(user_id))
+    return load_users().get(str(user_id))
 
 def set_user(user_id, data):
     users = load_users()
@@ -58,8 +57,7 @@ def is_blocked(user_id):
     return user and user.get("blocked", False)
 
 def get_user_schedules(user_id):
-    schedules = load_schedules()
-    return schedules.get(str(user_id), [])
+    return load_schedules().get(str(user_id), [])
 
 def save_user_schedules(user_id, items):
     schedules = load_schedules()
@@ -77,7 +75,16 @@ TYPE_NAMES = {
     "document": "Fayl", "animation": "GIF", "voice": "Ovozli", "video_note": "Video doira"
 }
 
-# ─── START ───────────────────────────────────────────────────────────────────
+def main_menu_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📅 Rejalashtirilgan postlar", callback_data="menu_list")],
+        [InlineKeyboardButton("❓ Qanday ishlatiladi?", callback_data="menu_help")],
+        [InlineKeyboardButton("📢 Kanalimni o'zgartirish", callback_data="change_channel")],
+        [InlineKeyboardButton("📊 Holat", callback_data="menu_status")],
+    ])
+
+def back_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Bosh menyu", callback_data="menu_back")]])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -88,42 +95,60 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = get_user(user_id)
 
-    # Yangi foydalanuvchi — adminга xabar
     if not user:
         try:
-            tg_user = update.effective_user
+            tg = update.effective_user
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
-                text=f"🆕 *Yangi foydalanuvchi!*\n\n"
-                     f"👤 Ism: {tg_user.full_name}\n"
-                     f"🆔 ID: `{user_id}`\n"
-                     f"👤 Username: @{tg_user.username or 'yoq'}\n\n"
-                     f"Bloklash: `/block {user_id}`",
+                text=(
+                    f"🆕 *Yangi foydalanuvchi!*\n\n"
+                    f"👤 Ism: {tg.full_name}\n"
+                    f"🆔 ID: `{user_id}`\n"
+                    f"👤 Username: @{tg.username or 'yoq'}\n\n"
+                    f"Bloklash: `/block {user_id}`"
+                ),
                 parse_mode="Markdown"
             )
-        except:
+        except Exception:
             pass
 
-    if user and user.get("channel") and not user.get("blocked"):
+    if user and user.get("channel"):
         now = now_uz()
+        ch = user["channel"]
         await update.message.reply_text(
-            f"👋 Xush kelibsiz!\n\n"
-            f"📢 Sizning kanalingiz: `{user['channel']}`\n"
+            f"👋 *Xush kelibsiz!*\n\n"
+            f"📢 Kanalingiz: `{ch}`\n"
             f"🕐 Toshkent vaqti: *{now.strftime('%H:%M')}*\n\n"
-            f"Fayl yuboring — men vaqt so'rayman!\n\n"
-            f"/mychannel — kanalni o'zgartirish\n"
-            f"/list — rejalashtirilgan postlar\n"
-            f"/cancel — oxirgi postni bekor qilish\n"
-            f"/status — holat",
-            parse_mode="Markdown"
+            f"━━━━━━━━━━━━━━━\n"
+            f"📌 *Qanday ishlatiladi:*\n\n"
+            f"1️⃣ Botga rasm/video/musiqa yuboring\n"
+            f"2️⃣ *Vaqt belgilash* tugmasini bosing\n"
+            f"3️⃣ Vaqt yozing: `09:00`\n"
+            f"4️⃣ Bot o'sha vaqtda kanalga yuboradi!\n\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"📋 *Buyruqlar:*\n\n"
+            f"📁 /queue — vaqt belgilanmagan fayllar\n"
+            f"📅 /list — rejalashtirilgan postlar\n"
+            f"❌ /cancel — oxirgi postni bekor qilish\n"
+            f"🗑 /cancelall — hammasini bekor qilish\n"
+            f"📢 /mychannel — kanalimni o'zgartirish\n"
+            f"📊 /status — bot holati",
+            parse_mode="Markdown",
+            reply_markup=main_menu_keyboard()
         )
     else:
         await update.message.reply_text(
             "👋 *Kanal Auto-Post Botiga xush kelibsiz!*\n\n"
-            "Bu bot kanalingizga belgilangan vaqtda post yuboradi.\n\n"
-            "📢 Kanalingiz username ini yuboring:\n"
+            "🤖 Bu bot sizning Telegram kanalingizga\n"
+            "belgilangan vaqtda avtomatik post yuboradi.\n\n"
+            "━━━━━━━━━━━━━━━\n"
+            "🚀 *Boshlash uchun:*\n\n"
+            "📢 Kanalingiz username ini yuboring\n"
             "Masalan: `@mening_kanalim`\n\n"
-            "⚠️ Botni kanalingizga *admin* qilib qo'shishni unutmang!",
+            "━━━━━━━━━━━━━━━\n"
+            "⚠️ *Muhim:* Botni kanalingizga\n"
+            "*admin* qilib qo'shishni unutmang!\n\n"
+            "Kanal → Boshqarish → Adminlar → Bot qo'shish",
             parse_mode="Markdown"
         )
         context.user_data["waiting_channel"] = True
@@ -133,15 +158,12 @@ async def mychannel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_blocked(user_id):
         return
     user = get_user(user_id)
-    channel = user.get("channel", "Belgilanmagan") if user else "Belgilanmagan"
-    keyboard = [[InlineKeyboardButton("✏️ Kanalni o'zgartirish", callback_data="change_channel")]]
+    ch = user.get("channel", "Belgilanmagan") if user else "Belgilanmagan"
     await update.message.reply_text(
-        f"📢 Sizning kanalingiz: `{channel}`",
+        f"📢 Sizning kanalingiz: `{ch}`",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✏️ O'zgartirish", callback_data="change_channel")]])
     )
-
-# ─── MATN QABUL QILISH ───────────────────────────────────────────────────────
 
 async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -152,12 +174,8 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if context.user_data.get("waiting_channel"):
         if not text.startswith("@"):
-            await update.message.reply_text(
-                "❌ @ bilan boshlang. Masalan: `@mening_kanalim`",
-                parse_mode="Markdown"
-            )
+            await update.message.reply_text("❌ @ bilan boshlang. Masalan: `@mening_kanalim`", parse_mode="Markdown")
             return
-
         existing = get_user(user_id) or {}
         existing.update({
             "channel": text,
@@ -167,7 +185,6 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
         set_user(user_id, existing)
         context.user_data.pop("waiting_channel", None)
-
         await update.message.reply_text(
             f"✅ *Kanal saqlandi:* `{text}`\n\n"
             f"Endi fayl yuboring — men vaqt so'rayman!\n\n"
@@ -181,7 +198,6 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def process_time(update, context, text):
     user_id = update.effective_user.id
-
     try:
         hour, minute = map(int, text.split(":"))
         if not (0 <= hour <= 23 and 0 <= minute <= 59):
@@ -213,7 +229,6 @@ async def process_time(update, context, text):
 
     user_schedules = get_user_schedules(user_id)
     schedule_id = f"u{user_id}_{hour:02d}{minute:02d}_{len(user_schedules)}"
-
     new_schedule = {
         "id": schedule_id,
         "file_id": item["file_id"],
@@ -244,8 +259,6 @@ async def process_time(update, context, text):
         f"📢 `{channel}`{extra}",
         parse_mode="Markdown"
     )
-
-# ─── FAYL QABUL QILISH ───────────────────────────────────────────────────────
 
 async def receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -280,66 +293,126 @@ async def receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["queue"] = []
     context.user_data["queue"].append({"file_id": file_id, "file_type": file_type, "caption": caption})
 
-    queue = context.user_data["queue"]
-    count = len(queue)
+    count = len(context.user_data["queue"])
     icon = TYPE_ICONS.get(file_type, "📎")
     name = TYPE_NAMES.get(file_type, "Fayl")
     now = now_uz()
 
-    keyboard = [[
+    keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("⏰ Vaqt belgilash", callback_data=f"set_time_{count-1}"),
         InlineKeyboardButton("➕ Yana fayl", callback_data="add_more")
-    ]]
+    ]])
     await msg.reply_text(
         f"{icon} *{name}* qabul qilindi! ({count}-fayl)\n"
         f"🕐 Hozir: *{now.strftime('%H:%M')}* | 📢 `{user['channel']}`",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=keyboard
     )
-
-# ─── TUGMALAR ────────────────────────────────────────────────────────────────
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    uid = query.from_user.id
 
-    if query.data == "change_channel":
+    if query.data == "menu_help":
+        await query.edit_message_text(
+            "❓ *Qanday ishlatiladi:*\n\n"
+            "1️⃣ Botga rasm/video/musiqa yuboring\n"
+            "2️⃣ *⏰ Vaqt belgilash* tugmasini bosing\n"
+            "3️⃣ Vaqt yozing: `09:00`\n"
+            "4️⃣ Bot o'sha vaqtda kanalga 1 marta yuboradi!\n\n"
+            "━━━━━━━━━━━━━━━\n"
+            "💡 *Eslatmalar:*\n\n"
+            "• Vaqt o'tib ketgan bo'lsa — ertaga yuboriladi\n"
+            "• Bir necha fayl navbatga qo'yish mumkin\n"
+            "• /queue — navbatdagi fayllarni ko'rish\n"
+            "• /list — rejalashtirilgan postlarni ko'rish\n"
+            "• /cancel — oxirgi postni bekor qilish",
+            parse_mode="Markdown",
+            reply_markup=back_keyboard()
+        )
+
+    elif query.data == "menu_list":
+        scheds = get_user_schedules(uid)
+        if not scheds:
+            await query.answer("📭 Rejalashtirilgan post yo'q!", show_alert=True)
+        else:
+            txt = f"📅 *Rejalashtirilgan ({len(scheds)} ta):*\n\n"
+            for i, s in enumerate(scheds, 1):
+                ic = TYPE_ICONS.get(s["file_type"], "📎")
+                tm = datetime.fromisoformat(s["send_time"])
+                txt += f"{i}. {ic} *{tm.strftime('%d.%m %H:%M')}*\n"
+            await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=back_keyboard())
+
+    elif query.data == "menu_status":
+        usr = get_user(uid)
+        ch = usr.get("channel", "?") if usr else "?"
+        scheds = get_user_schedules(uid)
+        nw = now_uz()
+        await query.edit_message_text(
+            f"📊 *Bot holati:* Ishlayapti ✅\n\n"
+            f"🕐 Vaqt: *{nw.strftime('%H:%M')}*\n"
+            f"📢 Kanal: `{ch}`\n"
+            f"📅 Rejalashtirilgan: *{len(scheds)}* ta",
+            parse_mode="Markdown",
+            reply_markup=back_keyboard()
+        )
+
+    elif query.data == "menu_back":
+        usr = get_user(uid)
+        nw = now_uz()
+        ch = usr.get("channel", "?") if usr else "?"
+        await query.edit_message_text(
+            f"👋 *Xush kelibsiz!*\n\n"
+            f"📢 Kanalingiz: `{ch}`\n"
+            f"🕐 Toshkent vaqti: *{nw.strftime('%H:%M')}*\n\n"
+            f"Fayl yuboring — men vaqt so'rayman!",
+            parse_mode="Markdown",
+            reply_markup=main_menu_keyboard()
+        )
+
+    elif query.data == "change_channel":
         context.user_data["waiting_channel"] = True
-        await query.edit_message_text("📢 Yangi kanal username ini yuboring:\nMasalan: `@kanal`", parse_mode="Markdown")
+        await query.edit_message_text(
+            "📢 Yangi kanal username ini yuboring:\nMasalan: `@mening_kanalim`",
+            parse_mode="Markdown"
+        )
 
     elif query.data == "add_more":
         queue = context.user_data.get("queue", [])
-        await query.edit_message_text(f"✅ Navbatda *{len(queue)}* ta fayl.\nKeyingi faylni yuboring yoki /queue", parse_mode="Markdown")
+        await query.edit_message_text(
+            f"✅ Navbatda *{len(queue)}* ta fayl.\nKeyingi faylni yuboring yoki /queue",
+            parse_mode="Markdown"
+        )
 
     elif query.data.startswith("set_time_"):
         idx = int(query.data.split("_")[-1])
         context.user_data["setting_time_for"] = idx
-        now = now_uz()
+        nw = now_uz()
         queue = context.user_data.get("queue", [])
         if idx < len(queue):
             icon = TYPE_ICONS.get(queue[idx]["file_type"], "📎")
             await query.edit_message_text(
-                f"{icon} *{idx+1}-fayl* uchun vaqt:\n"
-                f"🕐 Hozir: *{now.strftime('%H:%M')}*\n"
-                f"Masalan: `09:00` _(o'tgan bo'lsa ertaga)_",
+                f"{icon} *{idx+1}-fayl* uchun vaqt kiriting:\n"
+                f"🕐 Hozir: *{nw.strftime('%H:%M')}*\n\n"
+                f"Masalan: `09:00`\n"
+                f"_(Vaqt o'tib ketgan bo'lsa ertaga yuboriladi)_",
                 parse_mode="Markdown"
             )
-
-# ─── BUYRUQLAR ───────────────────────────────────────────────────────────────
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_blocked(user_id): return
-    schedules = get_user_schedules(user_id)
-    if not schedules:
+    scheds = get_user_schedules(user_id)
+    if not scheds:
         await update.message.reply_text("📭 Rejalashtirilgan post yo'q.")
         return
-    text = f"📅 *Rejalashtirilgan ({len(schedules)} ta):*\n\n"
-    for i, s in enumerate(schedules, 1):
-        icon = TYPE_ICONS.get(s["file_type"], "📎")
-        t = datetime.fromisoformat(s["send_time"])
-        text += f"{i}. {icon} *{t.strftime('%d.%m %H:%M')}*\n"
-    await update.message.reply_text(text, parse_mode="Markdown")
+    txt = f"📅 *Rejalashtirilgan ({len(scheds)} ta):*\n\n"
+    for i, s in enumerate(scheds, 1):
+        ic = TYPE_ICONS.get(s["file_type"], "📎")
+        tm = datetime.fromisoformat(s["send_time"])
+        txt += f"{i}. {ic} *{tm.strftime('%d.%m %H:%M')}*\n"
+    await update.message.reply_text(txt, parse_mode="Markdown")
 
 async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -348,111 +421,104 @@ async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not queue:
         await update.message.reply_text("📭 Navbatda fayl yo'q. Fayl yuboring!")
         return
-    text = f"📋 *Navbat ({len(queue)} ta):*\n\n"
-    keyboard = []
+    txt = f"📋 *Navbat ({len(queue)} ta):*\n\n"
+    kb = []
     for i, item in enumerate(queue):
-        icon = TYPE_ICONS.get(item["file_type"], "📎")
-        text += f"{i+1}. {icon} {TYPE_NAMES.get(item['file_type'], 'Fayl')}\n"
-        keyboard.append([InlineKeyboardButton(f"⏰ {i+1}-faylga vaqt", callback_data=f"set_time_{i}")])
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        ic = TYPE_ICONS.get(item["file_type"], "📎")
+        txt += f"{i+1}. {ic} {TYPE_NAMES.get(item['file_type'], 'Fayl')}\n"
+        kb.append([InlineKeyboardButton(f"⏰ {i+1}-faylga vaqt", callback_data=f"set_time_{i}")])
+    await update.message.reply_text(txt, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_blocked(user_id): return
-    schedules = get_user_schedules(user_id)
-    if not schedules:
+    scheds = get_user_schedules(user_id)
+    if not scheds:
         await update.message.reply_text("📭 Bekor qilish uchun post yo'q.")
         return
-    last = schedules.pop()
-    save_user_schedules(user_id, schedules)
+    last = scheds.pop()
+    save_user_schedules(user_id, scheds)
     if scheduler.get_job(last["id"]):
         scheduler.remove_job(last["id"])
-    t = datetime.fromisoformat(last["send_time"])
-    await update.message.reply_text(f"✅ Bekor qilindi: *{t.strftime('%d.%m %H:%M')}*", parse_mode="Markdown")
+    tm = datetime.fromisoformat(last["send_time"])
+    await update.message.reply_text(f"✅ Bekor qilindi: *{tm.strftime('%d.%m %H:%M')}*", parse_mode="Markdown")
 
 async def cancelall_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_blocked(user_id): return
-    schedules = get_user_schedules(user_id)
-    for s in schedules:
+    scheds = get_user_schedules(user_id)
+    for s in scheds:
         if scheduler.get_job(s["id"]):
             scheduler.remove_job(s["id"])
     save_user_schedules(user_id, [])
     context.user_data["queue"] = []
-    await update.message.reply_text(f"✅ *{len(schedules)}* ta post bekor qilindi!", parse_mode="Markdown")
+    await update.message.reply_text(f"✅ *{len(scheds)}* ta post bekor qilindi!", parse_mode="Markdown")
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_blocked(user_id): return
     user = get_user(user_id)
-    channel = user.get("channel", "Belgilanmagan") if user else "Belgilanmagan"
-    schedules = get_user_schedules(user_id)
+    ch = user.get("channel", "Belgilanmagan") if user else "Belgilanmagan"
+    scheds = get_user_schedules(user_id)
     queue = context.user_data.get("queue", [])
-    now = now_uz()
+    nw = now_uz()
     await update.message.reply_text(
-        f"🤖 *Bot holati:* Ishlayapti ✅\n\n"
-        f"🕐 Toshkent vaqti: *{now.strftime('%H:%M')}*\n"
-        f"📢 Sizning kanalingiz: `{channel}`\n"
-        f"📅 Rejalashtirilgan: *{len(schedules)}* ta\n"
+        f"📊 *Bot holati:* Ishlayapti ✅\n\n"
+        f"🕐 Toshkent vaqti: *{nw.strftime('%H:%M')}*\n"
+        f"📢 Kanalingiz: `{ch}`\n"
+        f"📅 Rejalashtirilgan: *{len(scheds)}* ta\n"
         f"📋 Navbatda: *{len(queue)}* ta",
         parse_mode="Markdown"
     )
 
-# ─── ADMIN BUYRUQLARI ────────────────────────────────────────────────────────
-
 async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
+    if update.effective_user.id != ADMIN_ID: return
     users = load_users()
     if not users:
         await update.message.reply_text("📭 Foydalanuvchi yo'q.")
         return
-    text = f"👥 *Foydalanuvchilar ({len(users)} ta):*\n\n"
+    txt = f"👥 *Foydalanuvchilar ({len(users)} ta):*\n\n"
     for uid, u in list(users.items())[:30]:
         blocked = " 🚫" if u.get("blocked") else ""
-        text += f"• {u.get('name','?')}{blocked} — `{u.get('channel','?')}` | ID: `{uid}`\n"
-    text += "\nBloklash: `/block ID`\nRuxsat: `/unblock ID`"
-    await update.message.reply_text(text, parse_mode="Markdown")
+        txt += f"• {u.get('name','?')}{blocked} — `{u.get('channel','?')}` | `{uid}`\n"
+    txt += "\n/block ID — bloklash\n/unblock ID — blokdan chiqarish"
+    await update.message.reply_text(txt, parse_mode="Markdown")
 
 async def block_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
+    if update.effective_user.id != ADMIN_ID: return
     if not context.args:
-        await update.message.reply_text("❌ ID kiriting: `/block 123456789`", parse_mode="Markdown")
+        await update.message.reply_text("❌ `/block 123456789`", parse_mode="Markdown")
         return
     target_id = context.args[0]
     user = get_user(target_id)
     if not user:
-        await update.message.reply_text("❌ Foydalanuvchi topilmadi!")
+        await update.message.reply_text("❌ Topilmadi!")
         return
     user["blocked"] = True
     set_user(target_id, user)
     try:
-        await context.bot.send_message(chat_id=int(target_id), text="❌ Siz botdan bloklandingiz.")
-    except:
+        await context.bot.send_message(int(target_id), "❌ Siz botdan bloklandingiz.")
+    except Exception:
         pass
     await update.message.reply_text(f"✅ `{target_id}` bloklandi!", parse_mode="Markdown")
 
 async def unblock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
+    if update.effective_user.id != ADMIN_ID: return
     if not context.args:
-        await update.message.reply_text("❌ ID kiriting: `/unblock 123456789`", parse_mode="Markdown")
+        await update.message.reply_text("❌ `/unblock 123456789`", parse_mode="Markdown")
         return
     target_id = context.args[0]
     user = get_user(target_id)
     if not user:
-        await update.message.reply_text("❌ Foydalanuvchi topilmadi!")
+        await update.message.reply_text("❌ Topilmadi!")
         return
     user["blocked"] = False
     set_user(target_id, user)
     try:
-        await context.bot.send_message(chat_id=int(target_id), text="✅ Blokiniz olib tashlandi! /start bosing.")
-    except:
+        await context.bot.send_message(int(target_id), "✅ Blokiniz olib tashlandi! /start bosing.")
+    except Exception:
         pass
     await update.message.reply_text(f"✅ `{target_id}` blokdan chiqarildi!", parse_mode="Markdown")
-
-# ─── JOB ─────────────────────────────────────────────────────────────────────
 
 def add_once_job(app, schedule, send_time, user_id):
     async def send_and_delete():
@@ -478,38 +544,37 @@ def add_once_job(app, schedule, send_time, user_id):
             elif ftype == "video_note":
                 await bot.send_video_note(chat_id=ch, video_note=fid)
 
-            schedules = get_user_schedules(user_id)
-            schedules = [s for s in schedules if s["id"] != schedule["id"]]
-            save_user_schedules(user_id, schedules)
+            scheds = get_user_schedules(user_id)
+            scheds = [s for s in scheds if s["id"] != schedule["id"]]
+            save_user_schedules(user_id, scheds)
 
-            t = datetime.fromisoformat(schedule["send_time"]).strftime('%H:%M')
-            await bot.send_message(chat_id=user_id, text=f"✅ Post yuborildi! ⏰ {t} | 📢 {ch}")
+            tm = datetime.fromisoformat(schedule["send_time"]).strftime('%H:%M')
+            await bot.send_message(chat_id=user_id, text=f"✅ Post yuborildi! ⏰ {tm} | 📢 {ch}")
+            logger.info(f"Post yuborildi: {schedule['id']}")
 
         except Exception as e:
             logger.error(f"Xato: {e}")
             try:
                 await app.bot.send_message(chat_id=user_id, text=f"❌ Xato: {e}\n\nBot kanalga admin qilinganmi?")
-            except:
+            except Exception:
                 pass
 
     scheduler.add_job(send_and_delete, DateTrigger(run_date=send_time), id=schedule["id"], replace_existing=True)
 
-# ─── MAIN ────────────────────────────────────────────────────────────────────
-
 async def post_init(application):
     now = now_uz()
-    schedules_data = load_schedules()
+    scheds_data = load_schedules()
     total = 0
-    for user_id, items in schedules_data.items():
+    for uid, items in scheds_data.items():
         valid = []
         for s in items:
-            send_time = datetime.fromisoformat(s["send_time"])
-            if send_time > now:
-                add_once_job(application, s, send_time, int(user_id))
+            st = datetime.fromisoformat(s["send_time"])
+            if st > now:
+                add_once_job(application, s, st, int(uid))
                 valid.append(s)
-        schedules_data[user_id] = valid
+        scheds_data[uid] = valid
         total += len(valid)
-    save_schedules(schedules_data)
+    save_schedules(scheds_data)
     scheduler.start()
     logger.info(f"Bot ishga tushdi. {total} ta post kutmoqda.")
 
